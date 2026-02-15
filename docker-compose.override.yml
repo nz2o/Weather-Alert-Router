@@ -1,0 +1,17 @@
+services:
+  app:
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ingest:
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  admin_ui:
+    depends_on:
+      app:
+        condition: service_healthy
