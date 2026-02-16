@@ -1,7 +1,7 @@
-FROM python:3.13-slim
+FROM python:3.14.3-slim
 WORKDIR /app
 
-# Avoid installing C/C++ build tools; rely on prebuilt binary wheels (e.g. psycopg2-binary)
+# Use prebuilt binary wheels (psycopg[binary], psycopg-binary) so build tools are not required.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
