@@ -56,7 +56,13 @@ def list_alerts():
             table.c.affected_zones,
             table.c.references,
         )
-        rows = db.execute(stmt).all()
+        try:
+            rows = db.execute(stmt).all()
+        except Exception:
+            # If the extracted columns don't exist yet (older DB), fall back
+            # to a minimal query to avoid crashing the app.
+            fallback = select(table.c.id, table.c.properties, func.ST_AsGeoJSON(table.c.geometry).label('geometry'))
+            rows = db.execute(fallback).all()
         out = []
         for r in rows:
             geom = r.geometry
