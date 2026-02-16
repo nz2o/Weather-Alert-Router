@@ -20,7 +20,7 @@ click==8.3.1
     # via uvicorn
 fastapi==0.129.0
     # via -r requirements.in
-geoalchemy2==0.14.4
+geoalchemy2==0.18.1
     # via -r requirements.in
 h11==0.16.0
     # via uvicorn
