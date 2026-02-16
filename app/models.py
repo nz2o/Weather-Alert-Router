@@ -11,6 +11,36 @@ class Alert(Base):
     geometry = Column(Geometry(geometry_type='GEOMETRY', srid=4326))
     received_at = Column(DateTime(timezone=True), server_default=sqlfunc.now())
 
+    # Extracted top-level CAP / NWS properties for easier querying
+    sent = Column(DateTime(timezone=True), nullable=True)
+    effective = Column(DateTime(timezone=True), nullable=True)
+    onset = Column(DateTime(timezone=True), nullable=True)
+    expires = Column(DateTime(timezone=True), nullable=True)
+    ends = Column(DateTime(timezone=True), nullable=True)
+
+    status = Column(String(128), nullable=True)
+    message_type = Column(String(128), nullable=True)
+    category = Column(String(128), nullable=True)
+    severity = Column(String(128), nullable=True)
+    certainty = Column(String(128), nullable=True)
+    urgency = Column(String(128), nullable=True)
+
+    event = Column(String(512), nullable=True)
+    sender = Column(String(256), nullable=True)
+    sender_name = Column(String(256), nullable=True)
+
+    headline = Column(String(512), nullable=True)
+    area_desc = Column(String(1024), nullable=True)
+    description = Column(String, nullable=True)
+    instruction = Column(String, nullable=True)
+    response = Column(String(128), nullable=True)
+
+    # Complex nested properties kept as JSONB
+    geocode = Column(JSONB, nullable=True)
+    parameters = Column(JSONB, nullable=True)
+    affected_zones = Column(JSONB, nullable=True)
+    references = Column(JSONB, nullable=True)
+
 class ApiKey(Base):
     __tablename__ = 'api_keys'
     id = Column(Integer, primary_key=True, autoincrement=True)

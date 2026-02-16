@@ -58,12 +58,75 @@ def _process_features(features, db):
             geom_json = json.dumps(geom)
             geom_expr = func.ST_SetSRID(func.ST_GeomFromGeoJSON(geom_json), 4326)
 
-        if geom_expr is not None:
-            stmt = pg_insert(table).values(id=aid, properties=properties, geometry=geom_expr)
-        else:
-            stmt = pg_insert(table).values(id=aid, properties=properties)
+        # Map first-level properties into individual columns when available
+        sent = properties.get('sent')
+        effective = properties.get('effective')
+        onset = properties.get('onset')
+        expires = properties.get('expires')
+        ends = properties.get('ends')
 
-        update_dict = {'properties': stmt.excluded.properties}
+        status = properties.get('status')
+        message_type = properties.get('messageType')
+        category = properties.get('category')
+        severity = properties.get('severity')
+        certainty = properties.get('certainty')
+        urgency = properties.get('urgency')
+
+        event = properties.get('event')
+        sender = properties.get('sender')
+        sender_name = properties.get('senderName')
+
+        headline = properties.get('headline')
+        area_desc = properties.get('areaDesc')
+        description = properties.get('description')
+        instruction = properties.get('instruction')
+        response = properties.get('response')
+
+        geocode = properties.get('geocode')
+        parameters = properties.get('parameters')
+        affected_zones = properties.get('affectedZones')
+        references = properties.get('references')
+
+        values = dict(
+            id=aid,
+            properties=properties,
+            sent=sent,
+            effective=effective,
+            onset=onset,
+            expires=expires,
+            ends=ends,
+            status=status,
+            message_type=message_type,
+            category=category,
+            severity=severity,
+            certainty=certainty,
+            urgency=urgency,
+            event=event,
+            sender=sender,
+            sender_name=sender_name,
+            headline=headline,
+            area_desc=area_desc,
+            description=description,
+            instruction=instruction,
+            response=response,
+            geocode=geocode,
+            parameters=parameters,
+            affected_zones=affected_zones,
+            references=references,
+        )
+
+        if geom_expr is not None:
+            values['geometry'] = geom_expr
+
+        stmt = pg_insert(table).values(**values)
+
+        # Build update dict; use excluded for columns so upsert updates fields
+        update_dict = {c: getattr(stmt.excluded, c) for c in [
+            'properties', 'sent', 'effective', 'onset', 'expires', 'ends',
+            'status', 'message_type', 'category', 'severity', 'certainty', 'urgency',
+            'event', 'sender', 'sender_name', 'headline', 'area_desc', 'description',
+            'instruction', 'response', 'geocode', 'parameters', 'affected_zones', 'references'
+        ]}
         if geom_expr is not None:
             update_dict['geometry'] = stmt.excluded.geometry
 

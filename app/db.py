@@ -46,3 +46,45 @@ def init_db():
     except Exception:
         # If engine connection itself fails (DB not ready), let the caller retry via container restart
         pass
+
+    # Ensure extracted columns exist (best-effort ALTER TABLE statements)
+    try:
+        with engine.connect() as conn:
+            alter_stmts = [
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS sent timestamptz",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS effective timestamptz",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS onset timestamptz",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS expires timestamptz",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS ends timestamptz",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS status varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS message_type varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS category varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS severity varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS certainty varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS urgency varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS event varchar(512)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS sender varchar(256)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS sender_name varchar(256)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS headline varchar(512)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS area_desc varchar(1024)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS description text",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS instruction text",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS response varchar(128)",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geocode jsonb",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS parameters jsonb",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS affected_zones jsonb",
+                "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS references jsonb",
+            ]
+            for s in alter_stmts:
+                try:
+                    conn.execute(text(s))
+                except Exception:
+                    pass
+            # Add an index on sent for faster time-range queries
+            try:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_alerts_sent ON alerts (sent);"))
+            except Exception:
+                pass
+            conn.commit()
+    except Exception:
+        pass

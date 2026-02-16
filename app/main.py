@@ -27,20 +27,72 @@ def list_alerts():
     db = SessionLocal()
     try:
         table = Alert.__table__
-        # Return stored geometry as GeoJSON (or null) so callers can inspect it
-        stmt = select(table.c.id, table.c.properties, func.ST_AsGeoJSON(table.c.geometry).label('geometry'))
+        # Return selected columns including geometry as GeoJSON
+        stmt = select(
+            table.c.id,
+            table.c.properties,
+            func.ST_AsGeoJSON(table.c.geometry).label('geometry'),
+            table.c.sent,
+            table.c.effective,
+            table.c.onset,
+            table.c.expires,
+            table.c.ends,
+            table.c.status,
+            table.c.message_type,
+            table.c.category,
+            table.c.severity,
+            table.c.certainty,
+            table.c.urgency,
+            table.c.event,
+            table.c.sender,
+            table.c.sender_name,
+            table.c.headline,
+            table.c.area_desc,
+            table.c.description,
+            table.c.instruction,
+            table.c.response,
+            table.c.geocode,
+            table.c.parameters,
+            table.c.affected_zones,
+            table.c.references,
+        )
         rows = db.execute(stmt).all()
         out = []
         for r in rows:
             geom = r.geometry
-            # ST_AsGeoJSON returns a JSON string; parse it back to JSON if present
             if geom is not None:
                 try:
                     geom = json.loads(geom)
                 except Exception:
-                    # leave as-is (string) if parsing fails
                     pass
-            out.append({"id": r.id, "properties": r.properties, "geometry": geom})
+            out.append({
+                "id": r.id,
+                "properties": r.properties,
+                "geometry": geom,
+                "sent": r.sent,
+                "effective": r.effective,
+                "onset": r.onset,
+                "expires": r.expires,
+                "ends": r.ends,
+                "status": r.status,
+                "messageType": r.message_type,
+                "category": r.category,
+                "severity": r.severity,
+                "certainty": r.certainty,
+                "urgency": r.urgency,
+                "event": r.event,
+                "sender": r.sender,
+                "senderName": r.sender_name,
+                "headline": r.headline,
+                "areaDesc": r.area_desc,
+                "description": r.description,
+                "instruction": r.instruction,
+                "response": r.response,
+                "geocode": r.geocode,
+                "parameters": r.parameters,
+                "affectedZones": r.affected_zones,
+                "references": r.references,
+            })
         return out
     finally:
         db.close()
