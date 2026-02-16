@@ -3,7 +3,11 @@ set -e
 
 python - <<'PY'
 import os, time, sys
-import psycopg2
+try:
+    import psycopg
+except Exception:
+    # Fallback to psycopg2 for compatibility
+    import psycopg2 as psycopg
 
 host=os.getenv('POSTGRES_HOST','db')
 port=int(os.getenv('POSTGRES_PORT','5432'))
@@ -14,7 +18,8 @@ timeout=int(os.getenv('DB_WAIT_TIMEOUT','60'))
 start=time.time()
 while True:
     try:
-        conn=psycopg2.connect(host=host,port=port,user=user,password=password,database=db,connect_timeout=5)
+        # psycopg (v3) uses psycopg.connect, psycopg2 compatibility is maintained via alias
+        conn = psycopg.connect(host=host, port=port, user=user, password=password, dbname=db, connect_timeout=5)
         conn.close()
         print('Database reachable')
         break
