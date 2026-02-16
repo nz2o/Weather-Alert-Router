@@ -23,7 +23,7 @@ Notes
 - This is experimental/non-operational — see `DISCLAIMER.md`.
  
 Deployment notes
-- **Python runtime:** services run on Python 3.12.
+- **Python runtime:** services run on Python 3.13.
 - **Database:** the stack uses PostGIS (image: `postgis/postgis:18-3.6`) — ensure the database supports PostGIS extensions.
 - **Environment variables:**
 	- `LOAD_EXAMPLE_JSON` — when set to `true` the ingest service will load `examples/alerts_snapshot.json` on startup to seed the DB for testing.

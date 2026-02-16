@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 WORKDIR /app
 
 # Avoid installing C/C++ build tools; rely on prebuilt binary wheels (e.g. psycopg2-binary)
