@@ -33,41 +33,77 @@ def fetch_and_store(limit=100):
     features = data.get('features', [])
     db = SessionLocal()
     try:
-        table = Alert.__table__
-        for f in features:
-            raw_id = f.get('id') or f.get('properties', {}).get('id')
-            aid = _normalize_id(raw_id)
-            if not aid:
-                continue
-            properties = f.get('properties') or {}
-            geom = f.get('geometry')
+        _process_features(features, db)
+    finally:
+        db.close()
 
-            # Build geometry expression only if geometry exists
-            geom_expr = None
-            if geom:
-                geom_json = json.dumps(geom)
-                geom_expr = func.ST_SetSRID(func.ST_GeomFromGeoJSON(geom_json), 4326)
 
-            # Prepare insert statement with optional geometry
-            if geom_expr is not None:
-                stmt = pg_insert(table).values(id=aid, properties=properties, geometry=geom_expr)
-            else:
-                stmt = pg_insert(table).values(id=aid, properties=properties)
+def _process_features(features, db):
+    """Process a list of GeoJSON Feature objects and upsert them into DB.
 
-            # On conflict, update properties and update geometry only when provided
-            update_dict = { 'properties': stmt.excluded.properties }
-            if geom_expr is not None:
-                update_dict['geometry'] = stmt.excluded.geometry
+    This centralizes the upsert logic so it can be used for live fetches
+    and loading example snapshots.
+    """
+    table = Alert.__table__
+    for f in features:
+        raw_id = f.get('id') or f.get('properties', {}).get('id')
+        aid = _normalize_id(raw_id)
+        if not aid:
+            continue
+        properties = f.get('properties') or {}
+        geom = f.get('geometry')
 
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[table.c.id],
-                set_=update_dict
-            )
-            try:
-                db.execute(stmt)
-                db.commit()
-            except Exception:
-                db.rollback()
+        geom_expr = None
+        if geom:
+            geom_json = json.dumps(geom)
+            geom_expr = func.ST_SetSRID(func.ST_GeomFromGeoJSON(geom_json), 4326)
+
+        if geom_expr is not None:
+            stmt = pg_insert(table).values(id=aid, properties=properties, geometry=geom_expr)
+        else:
+            stmt = pg_insert(table).values(id=aid, properties=properties)
+
+        update_dict = {'properties': stmt.excluded.properties}
+        if geom_expr is not None:
+            update_dict['geometry'] = stmt.excluded.geometry
+
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[table.c.id],
+            set_=update_dict
+        )
+        try:
+            db.execute(stmt)
+            db.commit()
+        except Exception:
+            db.rollback()
+
+
+def load_example_and_store():
+    """Load example JSON from the `examples/alerts_snapshot.json` file and process it.
+
+    Controlled by the `LOAD_EXAMPLE_JSON` environment variable.
+    """
+    load_example = os.getenv('LOAD_EXAMPLE_JSON', '0') in ('1', 'true', 'True')
+    if not load_example:
+        return
+
+    path = os.getenv('LOAD_EXAMPLE_JSON_PATH', 'examples/alerts_snapshot.json')
+    if not os.path.exists(path):
+        return
+
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+    except Exception:
+        return
+
+    features = data.get('features', []) if isinstance(data, dict) else []
+    if not features:
+        return
+
+    db = SessionLocal()
+    try:
+        _process_features(features, db)
     finally:
         db.close()
 
@@ -83,7 +119,10 @@ def run_polling():
     interval = int(os.getenv('POLL_INTERVAL_SECONDS', '300'))
     limit = int(os.getenv('POLL_LIMIT', '100'))
 
-    # One-shot run
+    # Optionally load example snapshot first (useful for dev/testing)
+    load_example_and_store()
+
+    # One-shot run against the live API
     fetch_and_store(limit=limit)
 
     if poll_enabled:
