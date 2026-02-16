@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>API Keys</title>
+  </head>
+  <body>
+    <h1>API Keys</h1>
+    <h2>Create Key</h2>
+    <form action="/admin/apikeys/create" method="post">
+      <label>Owner: <input name="owner" /></label>
+      <button type="submit">Create</button>
+    </form>
+
+    <h2>Existing Keys</h2>
+    <table border="1" cellpadding="6">
+      <tr><th>ID</th><th>Key (hidden)</th><th>Owner</th><th>Active</th><th>Actions</th></tr>
+      {% for k in keys %}
+      <tr>
+        <td>{{ k.id }}</td>
+        <td>{{ "••••" }}</td>
+        <td>{{ k.owner or "" }}</td>
+        <td>{{ "yes" if k.active else "no" }}</td>
+        <td>
+          <form action="/admin/apikeys/revoke" method="post" style="display:inline">
+            <input type="hidden" name="key_id" value="{{ k.id }}" />
+            {% if k.active %}
+            <button type="submit">Revoke</button>
+            {% else %}
+            <button type="submit">Ensure Revoked</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </body>
+</html>

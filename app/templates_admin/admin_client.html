@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Admin Client</title>
+    <style>label{display:block;margin:6px 0}</style>
+  </head>
+  <body>
+    <h1>API Key Admin Client</h1>
+    <p>This page proxies admin operations through the server; the ADMIN_KEY never reaches the browser.</p>
+    <input type="hidden" id="csrf_token" value="{{ csrf_token }}" />
+    <section>
+      <h2>Create key</h2>
+      <label>Owner: <input id="owner" /></label>
+      <button id="create">Create Key</button>
+      <pre id="createResult"></pre>
+    </section>
+
+    <section>
+      <h2>List keys</h2>
+      <button id="refresh">Refresh</button>
+      <pre id="listResult"></pre>
+    </section>
+
+    <script>
+      const CSRF_TOKEN = document.getElementById('csrf_token').value;
+
+      async function api(path, opts={}){
+        opts.headers = opts.headers || {};
+        if(CSRF_TOKEN) opts.headers['X-CSRF-Token'] = CSRF_TOKEN;
+        const url = window.location.origin + '/api' + path;
+        const res = await fetch(url, opts);
+        const text = await res.text();
+        return {status: res.status, body: text};
+      }
+
+      document.getElementById('create').addEventListener('click', async ()=>{
+        const owner = document.getElementById('owner').value || '';
+        const form = new URLSearchParams();
+        form.append('owner', owner);
+        const r = await api('/admin/apikeys/create', {method: 'POST', body: form});
+        document.getElementById('createResult').textContent = `status=${r.status}\n${r.body}`;
+      });
+
+      document.getElementById('refresh').addEventListener('click', async ()=>{
+        const r = await api('/admin/apikeys', {method: 'GET'});
+        document.getElementById('listResult').textContent = `status=${r.status}\n${r.body}`;
+      });
+    </script>
+  </body>
+</html>
