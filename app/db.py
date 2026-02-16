@@ -88,3 +88,14 @@ def init_db():
             conn.commit()
     except Exception:
         pass
+
+    # Drop the `sender` column if present (we no longer persist it separately)
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE alerts DROP COLUMN IF EXISTS sender;"))
+            except Exception:
+                pass
+            conn.commit()
+    except Exception:
+        pass

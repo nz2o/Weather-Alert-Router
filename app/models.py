@@ -26,7 +26,6 @@ class Alert(Base):
     urgency = Column(String(128), nullable=True)
 
     event = Column(String(512), nullable=True)
-    sender = Column(String(256), nullable=True)
     sender_name = Column(String(256), nullable=True)
 
     headline = Column(String(512), nullable=True)
@@ -37,7 +36,28 @@ class Alert(Base):
 
     # Complex nested properties kept as JSONB
     geocode = Column(JSONB, nullable=True)
+    geocode_ugc = Column(JSONB, nullable=True)
+    geocode_same = Column(JSONB, nullable=True)
     parameters = Column(JSONB, nullable=True)
+    # Per-parameter columns (JSONB) — created dynamically from observed keys
+    parameters_awipsidentifier = Column(JSONB, nullable=True)
+    parameters_blockchannel = Column(JSONB, nullable=True)
+    parameters_cmamlongtext = Column(JSONB, nullable=True)
+    parameters_cmamtext = Column(JSONB, nullable=True)
+    parameters_eas_org = Column(JSONB, nullable=True)
+    parameters_eventendingtime = Column(JSONB, nullable=True)
+    parameters_eventmotiondescription = Column(JSONB, nullable=True)
+    parameters_expiredreferences = Column(JSONB, nullable=True)
+    parameters_hailthreat = Column(JSONB, nullable=True)
+    parameters_maxhailsize = Column(JSONB, nullable=True)
+    parameters_maxwindgust = Column(JSONB, nullable=True)
+    parameters_nwsheadline = Column(JSONB, nullable=True)
+    parameters_tornadodetection = Column(JSONB, nullable=True)
+    parameters_vtec = Column(JSONB, nullable=True)
+    parameters_waterspoutdetection = Column(JSONB, nullable=True)
+    parameters_weahandling = Column(JSONB, nullable=True)
+    parameters_windthreat = Column(JSONB, nullable=True)
+    parameters_wmoidentifier = Column(JSONB, nullable=True)
     affected_zones = Column(JSONB, nullable=True)
     references = Column(JSONB, nullable=True)
 

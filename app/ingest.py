@@ -73,7 +73,6 @@ def _process_features(features, db):
         urgency = properties.get('urgency')
 
         event = properties.get('event')
-        sender = properties.get('sender')
         sender_name = properties.get('senderName')
 
         headline = properties.get('headline')
@@ -83,6 +82,11 @@ def _process_features(features, db):
         response = properties.get('response')
 
         geocode = properties.get('geocode')
+        geocode_ugc = None
+        geocode_same = None
+        if isinstance(geocode, dict):
+            geocode_ugc = geocode.get('UGC')
+            geocode_same = geocode.get('SAME')
         parameters = properties.get('parameters')
         affected_zones = properties.get('affectedZones')
         references = properties.get('references')
@@ -102,7 +106,6 @@ def _process_features(features, db):
             certainty=certainty,
             urgency=urgency,
             event=event,
-            sender=sender,
             sender_name=sender_name,
             headline=headline,
             area_desc=area_desc,
@@ -110,6 +113,8 @@ def _process_features(features, db):
             instruction=instruction,
             response=response,
             geocode=geocode,
+            geocode_ugc=geocode_ugc,
+            geocode_same=geocode_same,
             parameters=parameters,
             affected_zones=affected_zones,
             references=references,
@@ -124,11 +129,28 @@ def _process_features(features, db):
         update_dict = {c: getattr(stmt.excluded, c) for c in [
             'properties', 'sent', 'effective', 'onset', 'expires', 'ends',
             'status', 'message_type', 'category', 'severity', 'certainty', 'urgency',
-            'event', 'sender', 'sender_name', 'headline', 'area_desc', 'description',
+            'event', 'sender_name', 'headline', 'area_desc', 'description',
             'instruction', 'response', 'geocode', 'parameters', 'affected_zones', 'references'
         ]}
         if geom_expr is not None:
             update_dict['geometry'] = stmt.excluded.geometry
+
+        # include split geocode fields
+        update_dict['geocode_ugc'] = stmt.excluded.geocode_ugc
+        update_dict['geocode_same'] = stmt.excluded.geocode_same
+
+        # map parameter keys into per-parameter columns (JSONB)
+        if parameters and isinstance(parameters, dict):
+            # Known parameter keys — ensure these names match model columns
+            for pk in [
+                'AWIPSidentifier','BLOCKCHANNEL','CMAMlongtext','CMAMtext','EAS-ORG',
+                'eventEndingTime','eventMotionDescription','expiredReferences','hailThreat',
+                'maxHailSize','maxWindGust','NWSheadline','tornadoDetection','VTEC',
+                'waterspoutDetection','WEAHandling','windThreat','WMOidentifier'
+            ]:
+                if pk in parameters:
+                    col = 'parameters_' + ''.join([c.lower() if c.isalnum() else '_' for c in pk])
+                    update_dict[col] = getattr(stmt.excluded, col)
 
         stmt = stmt.on_conflict_do_update(
             index_elements=[table.c.id],
