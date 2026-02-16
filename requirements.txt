@@ -22,8 +22,6 @@ fastapi==0.129.0
     # via -r requirements.in
 geoalchemy2==0.14.4
     # via -r requirements.in
-greenlet==3.3.1
-    # via sqlalchemy
 h11==0.16.0
     # via uvicorn
 httptools==0.7.1
@@ -54,7 +52,7 @@ pyyaml==6.0.3
     # via uvicorn
 requests==2.32.4
     # via -r requirements.in
-sqlalchemy==2.0.24
+sqlalchemy==2.1.0b1
     # via
     #   -r requirements.in
     #   geoalchemy2
@@ -64,12 +62,10 @@ starlette==0.52.1
     #   fastapi
 typing-extensions==4.15.0
     # via
-    #   anyio
     #   fastapi
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via
