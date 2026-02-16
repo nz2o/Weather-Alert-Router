@@ -123,6 +123,62 @@ def _process_features(features, db):
         if geom_expr is not None:
             values['geometry'] = geom_expr
 
+        # map parameter keys into per-parameter columns (JSONB) before creating INSERT
+        if parameters and isinstance(parameters, dict):
+            # Transform parameter values into appropriate scalar/text/numeric types
+            type_map = {
+                'AWIPSidentifier': 'string',
+                'BLOCKCHANNEL': 'json',
+                'CMAMlongtext': 'text',
+                'CMAMtext': 'text',
+                'EAS-ORG': 'text',
+                'eventEndingTime': 'json',
+                'eventMotionDescription': 'json',
+                'expiredReferences': 'json',
+                'hailThreat': 'text',
+                'maxHailSize': 'numeric',
+                'maxWindGust': 'text',
+                'NWSheadline': 'text',
+                'tornadoDetection': 'text',
+                'VTEC': 'text',
+                'waterspoutDetection': 'text',
+                'WEAHandling': 'text',
+                'windThreat': 'text',
+                'WMOidentifier': 'string',
+            }
+            for pk, t in type_map.items():
+                if pk in parameters:
+                    raw = parameters[pk]
+                    col = 'parameters_' + ''.join([c.lower() if c.isalnum() else '_' for c in pk])
+                    # Convert arrays to scalars where appropriate
+                    if t == 'json':
+                        values[col] = raw
+                    elif t == 'string':
+                        if isinstance(raw, list) and raw:
+                            values[col] = raw[0]
+                        else:
+                            values[col] = str(raw) if raw is not None else None
+                    elif t == 'text':
+                        if isinstance(raw, list):
+                            # join array into paragraph
+                            values[col] = '\n'.join([str(x) for x in raw if x is not None])
+                        else:
+                            values[col] = str(raw) if raw is not None else None
+                    elif t == 'numeric':
+                        # numeric fields may be strings in the array; try parse
+                        val = None
+                        candidate = None
+                        if isinstance(raw, list) and raw:
+                            candidate = raw[0]
+                        else:
+                            candidate = raw
+                        try:
+                            if candidate is not None:
+                                val = float(candidate)
+                        except Exception:
+                            val = None
+                        values[col] = val
+
         stmt = pg_insert(table).values(**values)
 
         # Build update dict; use excluded for columns so upsert updates fields
@@ -138,10 +194,8 @@ def _process_features(features, db):
         # include split geocode fields
         update_dict['geocode_ugc'] = stmt.excluded.geocode_ugc
         update_dict['geocode_same'] = stmt.excluded.geocode_same
-
-        # map parameter keys into per-parameter columns (JSONB)
+        # ensure upsert updates per-parameter columns from excluded values
         if parameters and isinstance(parameters, dict):
-            # Known parameter keys — ensure these names match model columns
             for pk in [
                 'AWIPSidentifier','BLOCKCHANNEL','CMAMlongtext','CMAMtext','EAS-ORG',
                 'eventEndingTime','eventMotionDescription','expiredReferences','hailThreat',
@@ -203,6 +257,27 @@ def run_polling():
     poll_enabled = os.getenv('POLL_ENABLED', '0') in ('1', 'true', 'True')
     interval = int(os.getenv('POLL_INTERVAL_SECONDS', '300'))
     limit = int(os.getenv('POLL_LIMIT', '100'))
+
+    # Wait for the `app` service to become available before running ingest.
+    # This helps when Compose starts services concurrently after schema or model changes.
+    wait_for_app = os.getenv('WAIT_FOR_APP', '1') in ('1', 'true', 'True')
+    if wait_for_app:
+        timeout = int(os.getenv('WAIT_FOR_APP_TIMEOUT', '60'))
+        attempts = 0
+        ok = False
+        while attempts < timeout:
+            try:
+                r = requests.get('http://app:8000/alerts', timeout=3)
+                if r.status_code == 200:
+                    ok = True
+                    break
+            except Exception:
+                pass
+            attempts += 1
+            print(f"ingest: waiting for app (attempt {attempts}/{timeout})")
+            time.sleep(1)
+        if not ok:
+            print(f"ingest: app did not become ready within {timeout}s, continuing anyway")
 
     # Optionally load example snapshot first (useful for dev/testing)
     load_example_and_store()

@@ -12,6 +12,34 @@ cp .env.example .env
 docker-compose up --build
 ```
 
+Environment variables
+---------------------
+
+- `LOAD_EXAMPLE_JSON`: set to `true` to load `examples/alerts_snapshot.json` into the database on ingest startup (useful for development/testing).
+- `WAIT_FOR_APP`: set to `true` to make the ingest service wait until the `app` HTTP endpoint is healthy before ingesting.
+- `WAIT_FOR_APP_TIMEOUT`: number of seconds the ingest wait loop will poll for app readiness before giving up.
+
+Wiping the DB for schema changes
+--------------------------------
+
+If you change database models or column types and see errors about missing columns, recreate the Postgres volume and restart the stack to provision a clean schema:
+
+```bash
+docker-compose down -v
+docker-compose up --build
+```
+
+This will delete the database volume and all stored alerts — only use when you intentionally want a clean database.
+
+Seeding example data
+--------------------
+
+To seed example data via the ingest service, either set `LOAD_EXAMPLE_JSON=true` in your `.env` and restart the ingest container, or run the ingest module directly with the environment variable for a one-off load:
+
+```bash
+LOAD_EXAMPLE_JSON=true docker-compose run --rm ingest
+```
+
 3. To ingest alerts manually:
 
 ```bash

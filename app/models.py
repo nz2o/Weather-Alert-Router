@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, func
+from sqlalchemy import Column, String, Integer, DateTime, func, Text, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from geoalchemy2 import Geometry
 from sqlalchemy.sql import func as sqlfunc
@@ -39,25 +39,25 @@ class Alert(Base):
     geocode_ugc = Column(JSONB, nullable=True)
     geocode_same = Column(JSONB, nullable=True)
     parameters = Column(JSONB, nullable=True)
-    # Per-parameter columns (JSONB) — created dynamically from observed keys
-    parameters_awipsidentifier = Column(JSONB, nullable=True)
+    # Per-parameter columns: convert many from JSONB arrays to scalar/text/numeric
+    parameters_awipsidentifier = Column(String, nullable=True)
     parameters_blockchannel = Column(JSONB, nullable=True)
-    parameters_cmamlongtext = Column(JSONB, nullable=True)
-    parameters_cmamtext = Column(JSONB, nullable=True)
-    parameters_eas_org = Column(JSONB, nullable=True)
+    parameters_cmamlongtext = Column(Text, nullable=True)
+    parameters_cmamtext = Column(Text, nullable=True)
+    parameters_eas_org = Column(Text, nullable=True)
     parameters_eventendingtime = Column(JSONB, nullable=True)
     parameters_eventmotiondescription = Column(JSONB, nullable=True)
     parameters_expiredreferences = Column(JSONB, nullable=True)
-    parameters_hailthreat = Column(JSONB, nullable=True)
-    parameters_maxhailsize = Column(JSONB, nullable=True)
-    parameters_maxwindgust = Column(JSONB, nullable=True)
-    parameters_nwsheadline = Column(JSONB, nullable=True)
-    parameters_tornadodetection = Column(JSONB, nullable=True)
-    parameters_vtec = Column(JSONB, nullable=True)
-    parameters_waterspoutdetection = Column(JSONB, nullable=True)
-    parameters_weahandling = Column(JSONB, nullable=True)
-    parameters_windthreat = Column(JSONB, nullable=True)
-    parameters_wmoidentifier = Column(JSONB, nullable=True)
+    parameters_hailthreat = Column(Text, nullable=True)
+    parameters_maxhailsize = Column(Numeric, nullable=True)
+    parameters_maxwindgust = Column(Text, nullable=True)
+    parameters_nwsheadline = Column(Text, nullable=True)
+    parameters_tornadodetection = Column(Text, nullable=True)
+    parameters_vtec = Column(Text, nullable=True)
+    parameters_waterspoutdetection = Column(Text, nullable=True)
+    parameters_weahandling = Column(Text, nullable=True)
+    parameters_windthreat = Column(Text, nullable=True)
+    parameters_wmoidentifier = Column(String, nullable=True)
     affected_zones = Column(JSONB, nullable=True)
     references = Column(JSONB, nullable=True)
 
