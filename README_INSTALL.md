@@ -88,38 +88,66 @@ Open in a browser on the host:
 ```
 http://127.0.0.1:31802/
 ```
+# Installation — non-technical guide 🧭
 
-Docker networks and Traefik
---------------------------
+This guide walks a non-technical user through running Weather-Alert-Router on a home computer using Docker. If you do not yet have Docker installed, see the official instructions: https://docs.docker.com/get-docker/ 📚
 
-This compose file configures an internal `internal` bridge network for service-to-service communication and references an external `traefik-public` network so you can attach Traefik in your home lab. `traefik-public` is declared as an external network in `docker-compose.yml` so Traefik (managed outside this compose) can route to the `app` service.
+Prerequisites
+- A computer with Docker (or Docker Desktop) installed: https://docs.docker.com/get-docker/ ✅
+- Docker Compose (typically comes with Docker Desktop). If needed, see: https://docs.docker.com/compose/install/ 🧩
+- A basic terminal / command prompt and editor to copy the example `.env` file.
 
-If you use Traefik, create or ensure the network exists:
+Important — Disclaimer
+- Please read the project disclaimer before running this software: [DISCLAIMER.md](DISCLAIMER.md) ⚠️
 
-```bash
-docker network create traefik-public
-```
-
-The `app` service is connected to both `internal` and `traefik-public` so you can either access it directly via the exposed host port (`31800`) or let Traefik route traffic to the internal container port `8000`. Example Traefik labels (already shown as comments in `docker-compose.yml`) can be adapted for your Traefik setup.
-
-Notes
-- `app` host port: `31800` -> container `8000`
-- `admin_ui` host binding: `127.0.0.1:31802` -> container `8080` (bound to localhost for safety)
-
-Health-aware startup (optional)
---------------------------------
-
-If you want Docker Compose to wait for services to become healthy before starting dependents, use the provided override file which enables `depends_on.condition: service_healthy` behavior (Compose v2.4 format):
+Quick start (simple, 5 steps)
+1. Open a terminal/command prompt and go to the project folder.
+2. Copy the example environment file:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.override.yml up --build
+cp .env.example .env
+# Edit .env with a text editor if you need to change defaults (optional)
 ```
 
-This will respect the `healthcheck` definitions in `docker-compose.yml` so `app`, `ingest`, and `admin_ui` will wait until `db` (and `app` where appropriate) report healthy.
+3. Start the services:
 
-
-
-If you want to expose it differently, edit `docker-compose.yml` to change the `ports` mapping (or remove `127.0.0.1:` to make it public). Use firewall rules to restrict access to the chosen port.
+```bash
+docker compose up --build
 ```
+
+4. Wait a minute for services to start. Open your browser and visit:
+- API: http://localhost:31800/alerts 🌐
+- Admin UI (local only): http://127.0.0.1:31802/ 🔒
+
+5. Stop the stack when you are done:
+
+```bash
+docker compose down
+```
+
+How the database is seeded (no extra steps)
+- On first run the Postgres container will run any scripts in `db_init/`. This project seeds `alert_types` and `alert_keywords` automatically so you don't need to refresh them repeatedly. The seed scripts are idempotent and will not overwrite custom values.
+- Important: do NOT run `docker compose down -v` unless you want to wipe the database and start fresh — that deletes all stored alerts and data.
+
+Environment variables (easy language)
+- `LOAD_EXAMPLE_JSON` — set to `true` if you want a small example dataset loaded for testing.
+- `WAIT_FOR_APP` — set to `true` so the ingest service waits for the API to be ready before starting to ingest (recommended).
+
+Common commands (copy/paste)
+- Start in background: `docker compose up -d --build`
+- See logs: `docker compose logs -f --tail=200 app db ingest admin_ui`
+- Run one-off seed or ingest: `docker compose exec app python -m app.ingest`
+
+Troubleshooting tips (non-technical)
+- If ports conflict: change the ports in `docker-compose.yml` (look for `31800` and `31802`) or stop other services using those ports.
+- If the database reports missing columns after a code change, you can recreate a fresh database (this deletes all data):
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+Need help?
+- If you'd like, I can add a button or a small script to simplify starting/stopping the stack for non-technical users. Tell me if you want that. 👍
 
 
