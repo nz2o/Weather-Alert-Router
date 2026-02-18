@@ -26,6 +26,7 @@ Notes
 - Seeds: initial DB seeds (alert types and keywords) live in `db_init/` and run automatically when a fresh Postgres data directory is created. They are idempotent so running them again won't overwrite custom values.
 - Preserve data: do NOT run `docker compose down -v` unless you want to wipe the database (this deletes stored alerts).
 - If you want help, open an issue or ask for a walkthrough. 🙂
+- I can't provide tech support while I'm building things — please open issues for problems and I'll address them when development stabilizes.
 
 Important — Disclaimer
 - Please review the project disclaimer before using or deploying: [DISCLAIMER.md](DISCLAIMER.md) ⚠️
