@@ -97,6 +97,10 @@ Prerequisites
 - Docker Compose (typically comes with Docker Desktop). If needed, see: https://docs.docker.com/compose/install/ 🧩
 - A basic terminal / command prompt and editor to copy the example `.env` file.
 
+Optional helper UIs
+- If you prefer a browser-based Docker management UI on Linux, consider Portainer (Community Edition): https://www.portainer.io/ or an alternative such as Arcane. These provide an easy GUI for starting/stopping containers and viewing logs for less-technical users. 🧰
+- On Windows, Docker Desktop includes a GUI and integrates Compose — recommended for most users: https://www.docker.com/products/docker-desktop 🪟
+
 Important — Disclaimer
 - Please read the project disclaimer before running this software: [DISCLAIMER.md](DISCLAIMER.md) ⚠️
 
