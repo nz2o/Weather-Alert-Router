@@ -113,6 +113,23 @@ def init_db():
     except Exception:
         pass
 
+    # If there's a SQL migration file for SPC outlooks (db_init/03_spc_outlooks.sql), apply it idempotently.
+    try:
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        sql_file = root / 'db_init' / '03_spc_outlooks.sql'
+        if sql_file.exists():
+            with engine.begin() as conn:
+                try:
+                    sql_text = sql_file.read_text()
+                    # exec_driver_sql runs the raw SQL (supports multiple statements)
+                    conn.exec_driver_sql(sql_text)
+                except Exception:
+                    # If the DB user cannot create extensions or types, ignore and continue
+                    pass
+    except Exception:
+        pass
+
     # Drop the `sender` column if present (we no longer persist it separately)
     try:
         with engine.connect() as conn:
