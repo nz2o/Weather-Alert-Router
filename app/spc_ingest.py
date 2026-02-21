@@ -144,17 +144,22 @@ def save_example(name: str, url: str, content: bytes):
 
 
 def upsert_convective(product: str, url: str, payload: dict):
+    # derive issue timestamp from payload properties if present
+    issue_iso = None
+    if isinstance(payload, dict):
+        # prefer ISSUE_ISO; fall back to ISSUE
+        issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE")
     stmt = text(
         """
-        INSERT INTO convective_outlooks (product, url, payload, fetched_hour)
-        VALUES (:product, :url, :payload, date_trunc('hour', now()))
-        ON CONFLICT (url, fetched_hour) DO UPDATE
+        INSERT INTO convective_outlooks (product, url, payload, fetched_hour, issue)
+        VALUES (:product, :url, :payload, date_trunc('hour', now()), NULLIF(:issue_iso, '')::timestamptz)
+        ON CONFLICT (product, issue) DO UPDATE
           SET payload = EXCLUDED.payload
         RETURNING id
         """
     )
     with engine.begin() as conn:
-        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload), "issue_iso": issue_iso or ""})
         row = res.fetchone()
         outlook_id = row[0] if row is not None else None
         # If we have features, (re)store them into convective_features
@@ -208,17 +213,20 @@ def upsert_convective(product: str, url: str, payload: dict):
 
 
 def upsert_fire(product: str, url: str, payload: dict):
+    issue_iso = None
+    if isinstance(payload, dict):
+        issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE")
     stmt = text(
         """
-        INSERT INTO fire_outlooks (product, url, payload, fetched_hour)
-        VALUES (:product, :url, :payload, date_trunc('hour', now()))
-        ON CONFLICT (url, fetched_hour) DO UPDATE
+        INSERT INTO fire_outlooks (product, url, payload, fetched_hour, issue)
+        VALUES (:product, :url, :payload, date_trunc('hour', now()), NULLIF(:issue_iso, '')::timestamptz)
+        ON CONFLICT (product, issue) DO UPDATE
           SET payload = EXCLUDED.payload
         RETURNING id
         """
     )
     with engine.begin() as conn:
-        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload), "issue_iso": issue_iso or ""})
         row = res.fetchone()
         outlook_id = row[0] if row is not None else None
         features = payload.get("features") if isinstance(payload, dict) else None

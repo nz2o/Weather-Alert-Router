@@ -89,6 +89,30 @@ def init_db():
     except Exception:
         pass
 
+    # Ensure SPC outlooks have `issue` column and unique index on (product, issue)
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE convective_outlooks ADD COLUMN IF NOT EXISTS issue timestamptz;"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE fire_outlooks ADD COLUMN IF NOT EXISTS issue timestamptz;"))
+            except Exception:
+                pass
+            try:
+                # Create a unique index on product + issue to support upserts by product+issue
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_convective_product_issue ON convective_outlooks (product, issue);"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_fire_product_issue ON fire_outlooks (product, issue);"))
+            except Exception:
+                pass
+            conn.commit()
+    except Exception:
+        pass
+
     # Drop the `sender` column if present (we no longer persist it separately)
     try:
         with engine.connect() as conn:

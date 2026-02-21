@@ -6,8 +6,10 @@ CREATE TABLE IF NOT EXISTS convective_outlooks (
   url text NOT NULL,
   payload jsonb,
   fetched_hour timestamptz NOT NULL DEFAULT date_trunc('hour', now()),
+  -- The `issue` timestamp is used as a canonical identifier from the payload's ISSUE/ISSUE_ISO
+  issue timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(url, fetched_hour)
+  UNIQUE(product, issue)
 );
 
 CREATE INDEX IF NOT EXISTS idx_convective_outlooks_product ON convective_outlooks(product);
@@ -19,8 +21,9 @@ CREATE TABLE IF NOT EXISTS fire_outlooks (
   url text NOT NULL,
   payload jsonb,
   fetched_hour timestamptz NOT NULL DEFAULT date_trunc('hour', now()),
+  issue timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(url, fetched_hour)
+  UNIQUE(product, issue)
 );
 
 CREATE INDEX IF NOT EXISTS idx_fire_outlooks_product ON fire_outlooks(product);
