@@ -22,6 +22,7 @@ from pathlib import Path
 
 import requests
 from sqlalchemy import text
+from sqlalchemy import exc
 
 from .db import engine, load_dotenv
 
@@ -82,6 +83,60 @@ SPC_URLS = [
 ]
 
 
+def ensure_spc_feature_tables():
+        """Create feature-level tables if they don't exist (idempotent).
+
+        This helps when `db_init` was not applied to an existing DB.
+        """
+        create_sql = text(
+                """
+                CREATE TABLE IF NOT EXISTS convective_features (
+                    id serial PRIMARY KEY,
+                    outlook_id integer NOT NULL REFERENCES convective_outlooks(id) ON DELETE CASCADE,
+                    feature_index integer NOT NULL,
+                    properties jsonb,
+                    dn integer,
+                    valid timestamptz,
+                    expire timestamptz,
+                    issue timestamptz,
+                    forecaster text,
+                    label text,
+                    label2 text,
+                    stroke text,
+                    fill text,
+                    geom geometry(Geometry,4326),
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    UNIQUE(outlook_id, feature_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_convective_features_geom ON convective_features USING GIST (geom);
+                CREATE INDEX IF NOT EXISTS idx_convective_features_dn ON convective_features (dn);
+
+                CREATE TABLE IF NOT EXISTS fire_features (
+                    id serial PRIMARY KEY,
+                    outlook_id integer NOT NULL REFERENCES fire_outlooks(id) ON DELETE CASCADE,
+                    feature_index integer NOT NULL,
+                    properties jsonb,
+                    dn integer,
+                    valid timestamptz,
+                    expire timestamptz,
+                    issue timestamptz,
+                    forecaster text,
+                    label text,
+                    label2 text,
+                    stroke text,
+                    fill text,
+                    geom geometry(Geometry,4326),
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    UNIQUE(outlook_id, feature_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_fire_features_geom ON fire_features USING GIST (geom);
+                CREATE INDEX IF NOT EXISTS idx_fire_features_dn ON fire_features (dn);
+                """
+        )
+        with engine.begin() as conn:
+                conn.execute(create_sql)
+
+
 def save_example(name: str, url: str, content: bytes):
     fname = EXAMPLES_DIR / f"{name}.geojson"
     with open(fname, "wb") as f:
@@ -95,10 +150,61 @@ def upsert_convective(product: str, url: str, payload: dict):
         VALUES (:product, :url, :payload, date_trunc('hour', now()))
         ON CONFLICT (url, fetched_hour) DO UPDATE
           SET payload = EXCLUDED.payload
+        RETURNING id
         """
     )
     with engine.begin() as conn:
-        conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        row = res.fetchone()
+        outlook_id = row[0] if row is not None else None
+        # If we have features, (re)store them into convective_features
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if outlook_id and features:
+            # Ensure feature table exists before attempting deletes/inserts
+            tbl = conn.execute(text("SELECT to_regclass('public.convective_features')")).scalar()
+            if not tbl:
+                print("Notice: convective_features table not present; skipping feature inserts")
+            else:
+                # Remove any existing features for this outlook_id and re-insert
+                conn.execute(text("DELETE FROM convective_features WHERE outlook_id = :oid"), {"oid": outlook_id})
+                insert_stmt = text(
+                    """
+                    INSERT INTO convective_features (
+                      outlook_id, feature_index, properties, dn, valid, expire, issue,
+                      forecaster, label, label2, stroke, fill, geom
+                    ) VALUES (
+                      :outlook_id, :feature_index, :properties, :dn,
+                      NULLIF(:valid_iso, '')::timestamptz,
+                      NULLIF(:expire_iso, '')::timestamptz,
+                      NULLIF(:issue_iso, '')::timestamptz,
+                      :forecaster, :label, :label2, :stroke, :fill,
+                      ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326)
+                    )
+                    """
+                )
+                for idx, feat in enumerate(features):
+                    geom = feat.get("geometry")
+                    props = feat.get("properties") or {}
+                    params = {
+                        "outlook_id": outlook_id,
+                        "feature_index": idx,
+                        "properties": json.dumps(props),
+                        "dn": props.get("DN"),
+                        "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
+                        "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
+                        "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or "",
+                        "forecaster": props.get("FORECASTER"),
+                        "label": props.get("LABEL"),
+                        "label2": props.get("LABEL2"),
+                        "stroke": props.get("stroke"),
+                        "fill": props.get("fill"),
+                        "geom_json": json.dumps(geom) if geom is not None else None,
+                    }
+                    try:
+                        conn.execute(insert_stmt, params)
+                    except exc.DatabaseError as e:
+                        # Skip malformed geometries or insert errors but continue
+                        print(f"Warning: failed to insert feature {idx} for {url}: {e}")
 
 
 def upsert_fire(product: str, url: str, payload: dict):
@@ -108,10 +214,57 @@ def upsert_fire(product: str, url: str, payload: dict):
         VALUES (:product, :url, :payload, date_trunc('hour', now()))
         ON CONFLICT (url, fetched_hour) DO UPDATE
           SET payload = EXCLUDED.payload
+        RETURNING id
         """
     )
     with engine.begin() as conn:
-        conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload)})
+        row = res.fetchone()
+        outlook_id = row[0] if row is not None else None
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if outlook_id and features:
+            tbl = conn.execute(text("SELECT to_regclass('public.fire_features')")).scalar()
+            if not tbl:
+                print("Notice: fire_features table not present; skipping feature inserts")
+            else:
+                conn.execute(text("DELETE FROM fire_features WHERE outlook_id = :oid"), {"oid": outlook_id})
+                insert_stmt = text(
+                    """
+                    INSERT INTO fire_features (
+                      outlook_id, feature_index, properties, dn, valid, expire, issue,
+                      forecaster, label, label2, stroke, fill, geom
+                    ) VALUES (
+                      :outlook_id, :feature_index, :properties, :dn,
+                      NULLIF(:valid_iso, '')::timestamptz,
+                      NULLIF(:expire_iso, '')::timestamptz,
+                      NULLIF(:issue_iso, '')::timestamptz,
+                      :forecaster, :label, :label2, :stroke, :fill,
+                      ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326)
+                    )
+                    """
+                )
+                for idx, feat in enumerate(features):
+                    geom = feat.get("geometry")
+                    props = feat.get("properties") or {}
+                    params = {
+                        "outlook_id": outlook_id,
+                        "feature_index": idx,
+                        "properties": json.dumps(props),
+                        "dn": props.get("DN"),
+                        "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
+                        "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
+                        "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or "",
+                        "forecaster": props.get("FORECASTER"),
+                        "label": props.get("LABEL"),
+                        "label2": props.get("LABEL2"),
+                        "stroke": props.get("stroke"),
+                        "fill": props.get("fill"),
+                        "geom_json": json.dumps(geom) if geom is not None else None,
+                    }
+                    try:
+                        conn.execute(insert_stmt, params)
+                    except exc.DatabaseError as e:
+                        print(f"Warning: failed to insert fire feature {idx} for {url}: {e}")
 
 
 def fetch_and_store(name: str, url: str, product: str):
@@ -152,19 +305,47 @@ def main():
     parser.add_argument("--loop", action="store_true", help="Run continuously at top-of-hour")
     parser.add_argument("--once", action="store_true", help="Fetch once and exit")
     args = parser.parse_args()
+    # Load environment overrides from .env
+    try:
+        load_dotenv()
+    except Exception:
+        pass
 
-    if args.once:
+    env_once = os.getenv("SPC_ONCE", "").lower() in ("1", "true", "yes")
+    env_auto = os.getenv("SPC_AUTO_REFRESH", "").lower()
+    if env_auto == "":
+        env_auto = True
+    else:
+        env_auto = env_auto in ("1", "true", "yes")
+
+    interval_minutes = None
+    if os.getenv("SPC_INTERVAL_MINUTES"):
+        try:
+            interval_minutes = int(os.getenv("SPC_INTERVAL_MINUTES"))
+        except Exception:
+            interval_minutes = None
+
+    # CLI has precedence
+    if args.once or env_once:
+        ensure_spc_feature_tables()
         fetch_all_once()
         return
 
-    if args.loop:
-        # Align to top of hour then loop
-        print("SPC poller: running in loop mode (top-of-hour fetches)")
+    should_loop = args.loop or env_auto
+    if should_loop:
+        print("SPC poller: running in loop mode")
         # On start, fetch immediately
+        ensure_spc_feature_tables()
         fetch_all_once()
         while True:
-            sleep_until_top_of_hour()
-            fetch_all_once()
+            if interval_minutes and interval_minutes > 0:
+                print(f"Sleeping {interval_minutes} minutes between fetches")
+                time.sleep(interval_minutes * 60)
+                fetch_all_once()
+            else:
+                # Default behavior: align to the top of the next hour
+                sleep_until_top_of_hour()
+                fetch_all_once()
 
 
 if __name__ == "__main__":

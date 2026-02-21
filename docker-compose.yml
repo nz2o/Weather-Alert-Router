@@ -59,6 +59,30 @@ services:
       interval: 60s
       timeout: 10s
       retries: 5
+  spc_ingest:
+    build: .
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    # The module will read SPC_AUTO_REFRESH, SPC_ONCE, and SPC_INTERVAL_MINUTES from environment.
+    command: ["python", "-m", "app.spc_ingest"]
+    environment:
+      SPC_AUTO_REFRESH: "true"
+      # Set SPC_ONCE to "true" for a single run (useful for testing)
+      SPC_ONCE: "false"
+      # Optional: override minutes between runs; if empty, defaults to top-of-hour alignment
+      SPC_INTERVAL_MINUTES: ""
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://app:8000/alerts').getcode()==200 else 1)\"" ]
+      interval: 120s
+      timeout: 10s
+      retries: 5
   admin_ui:
     build: .
     env_file: .env
