@@ -13,3 +13,6 @@ build/
 
 # Ignore SPC example payloads
 examples/spc/
+
+# Ignore temporary runtime files
+tmp/
