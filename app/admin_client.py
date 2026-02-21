@@ -3,9 +3,9 @@ import time
 import hmac
 import hashlib
 import base64
-from fastapi import FastAPI, Request, Form, HTTPException, Header
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Request, Form, HTTPException, Header # type: ignore
+from fastapi.responses import HTMLResponse, JSONResponse # type: ignore
+from fastapi.templating import Jinja2Templates # type: ignore
 from .db import SessionLocal
 from .models import ApiKey
 

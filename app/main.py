@@ -6,13 +6,36 @@ from .models import Alert, ApiKey
 from .schemas import AlertIn, AlertOut, ApiKeyCreate
 from .auth import verify_api_key, verify_admin
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import select, text
 from starlette.responses import RedirectResponse
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import func
 import json
 
 app = FastAPI(title="Weather Alert Router")
+
+
+@app.get("/spc_status")
+def spc_status():
+    db = SessionLocal()
+    try:
+        try:
+            row = db.execute(text("SELECT source, last_run, last_success, convective_count, fire_count, message, updated_at FROM spc_ingest_status WHERE source='spc' LIMIT 1")).first()
+        except Exception:
+            return {"status": "unknown", "message": "spc_ingest_status table not present"}
+        if not row:
+            return {"status": "no-data"}
+        return {
+            "source": row.source,
+            "last_run": row.last_run,
+            "last_success": row.last_success,
+            "convective_count": row.convective_count,
+            "fire_count": row.fire_count,
+            "message": row.message,
+            "updated_at": row.updated_at,
+        }
+    finally:
+        db.close()
 
 templates = Jinja2Templates(directory="app/templates")
 

@@ -101,19 +101,44 @@ def init_db():
             except Exception:
                 pass
             try:
-                # Create a unique index on product + issue to support upserts by product+issue
-                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_convective_product_issue ON convective_outlooks (product, issue);"))
+                # Drop any legacy unique indexes that included dn to allow schema migration
+                try:
+                    conn.execute(text("DROP INDEX IF EXISTS uq_convective_product_issue_dn;"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("DROP INDEX IF EXISTS uq_fire_product_issue_dn;"))
+                except Exception:
+                    pass
+                # Create a unique index on product + issue + feature_index to support idempotent upserts
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_convective_product_issue_featidx ON convective_outlooks (product, issue, feature_index);"))
             except Exception:
                 pass
             try:
-                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_fire_product_issue ON fire_outlooks (product, issue);"))
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_fire_product_issue_featidx ON fire_outlooks (product, issue, feature_index);"))
             except Exception:
                 pass
             conn.commit()
     except Exception:
         pass
 
-    # If there's a SQL migration file for SPC outlooks (db_init/03_spc_outlooks.sql), apply it idempotently.
+    # Ensure dn column is text for both outlook tables (convert existing integer values to text)
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE convective_outlooks ALTER COLUMN dn TYPE text USING dn::text;"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE fire_outlooks ALTER COLUMN dn TYPE text USING dn::text;"))
+            except Exception:
+                pass
+            conn.commit()
+    except Exception:
+        pass
+
+    # If there's a SQL migration file for SPC outlooks (db_init/03_spc_outlooks.sql), apply it idempotently
+    # and migrate any legacy *_features rows into the single-feature outlook tables.
     try:
         from pathlib import Path
         root = Path(__file__).resolve().parents[1]
@@ -122,61 +147,205 @@ def init_db():
             with engine.begin() as conn:
                 try:
                     sql_text = sql_file.read_text()
-                    # If running against an older DB with separate *_features tables,
-                    # perform a migration into the new single-table schema.
-                    # Detect old feature tables
+                    # Ensure the new single-table schema exists (idempotent)
+                    conn.exec_driver_sql(sql_text)
+
+                    # Detect legacy feature tables
                     has_conv_features = conn.execute(text("SELECT to_regclass('public.convective_features')")).scalar()
                     has_fire_features = conn.execute(text("SELECT to_regclass('public.fire_features')")).scalar()
 
-                    # First, create the new single-table schema in a safe way
-                    conn.exec_driver_sql(sql_text)
-
-                    # If old feature tables exist, migrate their rows into the new single table
+                    # Migrate convective features into convective_outlooks if present
                     if has_conv_features:
-                        # Create a temp new table (if not exists) and populate from old tables
-                        conn.exec_driver_sql(
-                            """
-                            CREATE TABLE IF NOT EXISTS convective_outlooks_new AS
-                              SELECT NULL::serial AS id LIMIT 0;
-                            """
-                        )
-                        # Create the proper schema for convective_outlooks_new
-                        conn.exec_driver_sql(sql_text.replace('CREATE TABLE IF NOT EXISTS convective_outlooks', 'CREATE TABLE IF NOT EXISTS convective_outlooks_new'))
-                        conn.exec_driver_sql(
-                            """
-                            INSERT INTO convective_outlooks_new (
-                              product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
-                              forecaster, label, label2, stroke, fill, geom, created_at
+                        try:
+                            conn.exec_driver_sql(
+                                """
+                                INSERT INTO convective_outlooks (
+                                  product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+                                  forecaster, label, label2, stroke, fill, geom, created_at
+                                )
+                                SELECT o.product, o.url, o.payload, COALESCE(o.fetched_hour, now()), f.feature_index, f.properties, f.dn, f.valid, f.expire,
+                                       COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
+                                    FROM convective_outlooks o JOIN convective_features f ON f.outlook_id = o.id
+                                                                    ON CONFLICT (product, issue) DO UPDATE
+                                  SET payload = EXCLUDED.payload,
+                                      properties = EXCLUDED.properties,
+                                      dn = EXCLUDED.dn,
+                                      valid = EXCLUDED.valid,
+                                      expire = EXCLUDED.expire,
+                                      forecaster = EXCLUDED.forecaster,
+                                      label = EXCLUDED.label,
+                                      label2 = EXCLUDED.label2,
+                                      stroke = EXCLUDED.stroke,
+                                      fill = EXCLUDED.fill,
+                                      geom = EXCLUDED.geom,
+                                      created_at = EXCLUDED.created_at;
+                                """
                             )
-                            SELECT o.product, o.url, o.payload, o.fetched_hour, f.feature_index, f.properties, f.dn, f.valid, f.expire,
-                                   COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
-                            FROM convective_outlooks o JOIN convective_features f ON f.outlook_id = o.id
-                            ON CONFLICT DO NOTHING;
-                            """
-                        )
-                        # Preserve old tables by renaming and swap in new table
-                        conn.exec_driver_sql("ALTER TABLE convective_outlooks RENAME TO convective_outlooks_old;")
-                        conn.exec_driver_sql("ALTER TABLE convective_features RENAME TO convective_features_old;")
-                        conn.exec_driver_sql("ALTER TABLE convective_outlooks_new RENAME TO convective_outlooks;")
+                            # Rename the old feature table to preserve data (non-destructive)
+                            conn.exec_driver_sql("ALTER TABLE IF EXISTS convective_features RENAME TO convective_features_old;")
+                        except Exception:
+                            # If migration fails for any reason, don't block startup
+                            pass
 
+                    # Normalize geometry to Multi* for compatibility (safe if already multi)
+                    try:
+                        conn.exec_driver_sql("UPDATE convective_outlooks SET geom = ST_Multi(geom) WHERE geom IS NOT NULL;")
+                        conn.exec_driver_sql("UPDATE fire_outlooks SET geom = ST_Multi(geom) WHERE geom IS NOT NULL;")
+                    except Exception:
+                        pass
+
+                    # Migrate fire features into fire_outlooks if present
                     if has_fire_features:
-                        conn.exec_driver_sql(sql_text.replace('convective_outlooks', 'fire_outlooks').replace('CREATE TABLE IF NOT EXISTS fire_outlooks', 'CREATE TABLE IF NOT EXISTS fire_outlooks_new'))
+                        try:
+                            conn.exec_driver_sql(
+                                """
+                                INSERT INTO fire_outlooks (
+                                  product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+                                  forecaster, label, label2, stroke, fill, geom, created_at
+                                )
+                                SELECT o.product, o.url, o.payload, COALESCE(o.fetched_hour, now()), f.feature_index, f.properties, f.dn, f.valid, f.expire,
+                                       COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
+                                FROM fire_outlooks o JOIN fire_features f ON f.outlook_id = o.id
+                                ON CONFLICT (product, issue) DO UPDATE
+                                  SET payload = EXCLUDED.payload,
+                                      properties = EXCLUDED.properties,
+                                      dn = EXCLUDED.dn,
+                                      valid = EXCLUDED.valid,
+                                      expire = EXCLUDED.expire,
+                                      forecaster = EXCLUDED.forecaster,
+                                      label = EXCLUDED.label,
+                                      label2 = EXCLUDED.label2,
+                                      stroke = EXCLUDED.stroke,
+                                      fill = EXCLUDED.fill,
+                                      geom = EXCLUDED.geom,
+                                      created_at = EXCLUDED.created_at;
+                                """
+                            )
+                            conn.exec_driver_sql("ALTER TABLE IF EXISTS fire_features RENAME TO fire_features_old;")
+                        except Exception:
+                            pass
+
+                    # If some rows were created with only `payload` populated (legacy/migration issues),
+                    # extract the first feature's properties/geometry into typed columns.
+                    try:
                         conn.exec_driver_sql(
                             """
-                            INSERT INTO fire_outlooks_new (
-                              product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
-                              forecaster, label, label2, stroke, fill, geom, created_at
-                            )
-                            SELECT o.product, o.url, o.payload, o.fetched_hour, f.feature_index, f.properties, f.dn, f.valid, f.expire,
-                                   COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
-                            FROM fire_outlooks o JOIN fire_features f ON f.outlook_id = o.id
-                            ON CONFLICT DO NOTHING;
+                            -- Populate convective_outlooks typed columns from payload->features[0]
+                            UPDATE convective_outlooks SET
+                                properties = payload->'features'->0->'properties',
+                                dn = COALESCE(NULLIF((payload->'features'->0->'properties'->>'DN'),'') , 'NA'),
+                                valid = NULLIF(payload->'features'->0->'properties'->>'VALID_ISO','')::timestamptz,
+                                expire = NULLIF(payload->'features'->0->'properties'->>'EXPIRE_ISO','')::timestamptz,
+                                issue = NULLIF(payload->'features'->0->'properties'->>'ISSUE_ISO','')::timestamptz,
+                                forecaster = payload->'features'->0->'properties'->>'FORECASTER',
+                                label = payload->'features'->0->'properties'->>'LABEL',
+                                label2 = payload->'features'->0->'properties'->>'LABEL2',
+                                stroke = payload->'features'->0->'properties'->>'stroke',
+                                fill = payload->'features'->0->'properties'->>'fill',
+                                geom = CASE WHEN (payload->'features'->0->'geometry') IS NULL OR (payload->'features'->0->'geometry') = 'null' THEN geom ELSE ST_SetSRID(ST_Multi(ST_GeomFromGeoJSON((payload->'features'->0->'geometry')::text)),4326) END
+                            WHERE (payload->'features'->0->'properties') IS NOT NULL;
+
+                            -- Populate fire_outlooks typed columns from payload->features[0]
+                            UPDATE fire_outlooks SET
+                                properties = payload->'features'->0->'properties',
+                                dn = COALESCE(NULLIF((payload->'features'->0->'properties'->>'DN'),'') , 'NA'),
+                                valid = NULLIF(payload->'features'->0->'properties'->>'VALID_ISO','')::timestamptz,
+                                expire = NULLIF(payload->'features'->0->'properties'->>'EXPIRE_ISO','')::timestamptz,
+                                issue = NULLIF(payload->'features'->0->'properties'->>'ISSUE_ISO','')::timestamptz,
+                                forecaster = payload->'features'->0->'properties'->>'FORECASTER',
+                                label = payload->'features'->0->'properties'->>'LABEL',
+                                label2 = payload->'features'->0->'properties'->>'LABEL2',
+                                stroke = payload->'features'->0->'properties'->>'stroke',
+                                fill = payload->'features'->0->'properties'->>'fill',
+                                geom = CASE WHEN (payload->'features'->0->'geometry') IS NULL OR (payload->'features'->0->'geometry') = 'null' THEN geom ELSE ST_SetSRID(ST_Multi(ST_GeomFromGeoJSON((payload->'features'->0->'geometry')::text)),4326) END
+                            WHERE (payload->'features'->0->'properties') IS NOT NULL;
                             """
                         )
-                        conn.exec_driver_sql("ALTER TABLE fire_outlooks RENAME TO fire_outlooks_old;")
-                        conn.exec_driver_sql("ALTER TABLE fire_features RENAME TO fire_features_old;")
-                        conn.exec_driver_sql("ALTER TABLE fire_outlooks_new RENAME TO fire_outlooks;")
-                    
+                    except Exception:
+                        pass
+
+                    # Ensure DN matches the stored properties (do NOT append suffixes)
+                    try:
+                        conn.exec_driver_sql(
+                            """
+                            UPDATE convective_outlooks SET dn = COALESCE(NULLIF(properties->>'DN',''), COALESCE(NULLIF((payload->'features'->0->'properties'->>'DN'),''),'NA'));
+                            UPDATE fire_outlooks SET dn = COALESCE(NULLIF(properties->>'DN',''), COALESCE(NULLIF((payload->'features'->0->'properties'->>'DN'),''),'NA'));
+                            -- Recompute feature_index by finding the ordinal of the matching properties JSON in the payload features
+                            UPDATE convective_outlooks c SET feature_index = sub.idx
+                            FROM (
+                                SELECT c2.id,
+                                    (SELECT (fe.ord - 1)
+                                     FROM jsonb_array_elements(c2.payload->'features') WITH ORDINALITY AS fe(elem, ord)
+                                     WHERE fe.elem->'properties' = c2.properties
+                                     LIMIT 1) AS idx
+                                FROM convective_outlooks c2
+                                WHERE c2.feature_index IS NULL OR c2.feature_index = 0
+                            ) sub
+                            WHERE c.id = sub.id AND sub.idx IS NOT NULL;
+
+                            UPDATE fire_outlooks c SET feature_index = sub.idx
+                            FROM (
+                                SELECT c2.id,
+                                    (SELECT (fe.ord - 1)
+                                     FROM jsonb_array_elements(c2.payload->'features') WITH ORDINALITY AS fe(elem, ord)
+                                     WHERE fe.elem->'properties' = c2.properties
+                                     LIMIT 1) AS idx
+                                FROM fire_outlooks c2
+                                WHERE c2.feature_index IS NULL OR c2.feature_index = 0
+                            ) sub
+                            WHERE c.id = sub.id AND sub.idx IS NOT NULL;
+
+                            -- fallback: ensure no NULLs remain
+                            UPDATE convective_outlooks SET feature_index = 0 WHERE feature_index IS NULL;
+                            UPDATE fire_outlooks SET feature_index = 0 WHERE feature_index IS NULL;
+                            """
+                        )
+                    except Exception:
+                        pass
+
+                    # Additional fixes: clean DN suffixes (eg. '-<id>') introduced earlier,
+                    # and recompute feature_index by matching properties/DN to payload features.
+                    try:
+                        conn.exec_driver_sql(
+                            """
+                            -- Remove appended -<id> suffixes from dn if present
+                            UPDATE convective_outlooks SET dn = regexp_replace(dn, '-[0-9]+$','') WHERE dn ~ '-[0-9]+$';
+                            UPDATE fire_outlooks SET dn = regexp_replace(dn, '-[0-9]+$','') WHERE dn ~ '-[0-9]+$';
+
+                            -- Recompute feature_index by matching properties JSON or DN within the payload features
+                            UPDATE convective_outlooks c SET feature_index = sub.idx
+                            FROM (
+                                SELECT c2.id,
+                                    (SELECT (fe.ord - 1)
+                                     FROM jsonb_array_elements(c2.payload->'features') WITH ORDINALITY AS fe(elem, ord)
+                                     WHERE (fe.elem->'properties') IS NOT NULL
+                                         AND ((fe.elem->'properties') = c2.properties OR (fe.elem->'properties'->>'DN') = c2.properties->>'DN')
+                                     LIMIT 1) AS idx
+                                FROM convective_outlooks c2
+                                WHERE c2.feature_index IS NULL
+                            ) sub
+                            WHERE c.id = sub.id AND sub.idx IS NOT NULL;
+
+                            UPDATE fire_outlooks c SET feature_index = sub.idx
+                            FROM (
+                                SELECT c2.id,
+                                    (SELECT (fe.ord - 1)
+                                     FROM jsonb_array_elements(c2.payload->'features') WITH ORDINALITY AS fe(elem, ord)
+                                     WHERE (fe.elem->'properties') IS NOT NULL
+                                         AND ((fe.elem->'properties') = c2.properties OR (fe.elem->'properties'->>'DN') = c2.properties->>'DN')
+                                     LIMIT 1) AS idx
+                                FROM fire_outlooks c2
+                                WHERE c2.feature_index IS NULL
+                            ) sub
+                            WHERE c.id = sub.id AND sub.idx IS NOT NULL;
+
+                            -- fallback: set any remaining NULL indices to 0
+                            UPDATE convective_outlooks SET feature_index = 0 WHERE feature_index IS NULL;
+                            UPDATE fire_outlooks SET feature_index = 0 WHERE feature_index IS NULL;
+                            """
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     # If the DB user cannot create extensions or types, ignore and continue
                     pass

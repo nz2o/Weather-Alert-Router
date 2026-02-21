@@ -10,3 +10,6 @@ venv/
 dist/
 build/
 *.egg-info/
+
+# Ignore SPC example payloads
+examples/spc/
