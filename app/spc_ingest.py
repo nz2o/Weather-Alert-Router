@@ -144,135 +144,118 @@ def save_example(name: str, url: str, content: bytes):
 
 
 def upsert_convective(product: str, url: str, payload: dict):
-    # derive issue timestamp from payload properties if present
-    issue_iso = None
-    if isinstance(payload, dict):
-        # prefer ISSUE_ISO; fall back to ISSUE
-        issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE")
-    stmt = text(
+    # For each feature in the payload, insert or update a single-row representing that feature
+    if not isinstance(payload, dict):
+        return
+    features = payload.get("features") or []
+    issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE") or ""
+    insert_stmt = text(
         """
-        INSERT INTO convective_outlooks (product, url, payload, fetched_hour, issue)
-        VALUES (:product, :url, :payload, date_trunc('hour', now()), NULLIF(:issue_iso, '')::timestamptz)
-        ON CONFLICT (product, issue) DO UPDATE
-          SET payload = EXCLUDED.payload
-        RETURNING id
+        INSERT INTO convective_outlooks (
+          product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+          forecaster, label, label2, stroke, fill, geom, created_at
+        ) VALUES (
+          :product, :url, :payload, date_trunc('hour', now()), :feature_index, :properties, :dn,
+          NULLIF(:valid_iso, '')::timestamptz, NULLIF(:expire_iso, '')::timestamptz, NULLIF(:issue_iso, '')::timestamptz,
+          :forecaster, :label, :label2, :stroke, :fill, ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326), now()
+        )
+        ON CONFLICT (product, issue, feature_index) DO UPDATE
+          SET payload = EXCLUDED.payload,
+              properties = EXCLUDED.properties,
+              dn = EXCLUDED.dn,
+              valid = EXCLUDED.valid,
+              expire = EXCLUDED.expire,
+              forecaster = EXCLUDED.forecaster,
+              label = EXCLUDED.label,
+              label2 = EXCLUDED.label2,
+              stroke = EXCLUDED.stroke,
+              fill = EXCLUDED.fill,
+              geom = EXCLUDED.geom,
+              created_at = EXCLUDED.created_at
         """
     )
     with engine.begin() as conn:
-        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload), "issue_iso": issue_iso or ""})
-        row = res.fetchone()
-        outlook_id = row[0] if row is not None else None
-        # If we have features, (re)store them into convective_features
-        features = payload.get("features") if isinstance(payload, dict) else None
-        if outlook_id and features:
-            # Ensure feature table exists before attempting deletes/inserts
-            tbl = conn.execute(text("SELECT to_regclass('public.convective_features')")).scalar()
-            if not tbl:
-                print("Notice: convective_features table not present; skipping feature inserts")
-            else:
-                # Remove any existing features for this outlook_id and re-insert
-                conn.execute(text("DELETE FROM convective_features WHERE outlook_id = :oid"), {"oid": outlook_id})
-                insert_stmt = text(
-                    """
-                    INSERT INTO convective_features (
-                      outlook_id, feature_index, properties, dn, valid, expire, issue,
-                      forecaster, label, label2, stroke, fill, geom
-                    ) VALUES (
-                      :outlook_id, :feature_index, :properties, :dn,
-                      NULLIF(:valid_iso, '')::timestamptz,
-                      NULLIF(:expire_iso, '')::timestamptz,
-                      NULLIF(:issue_iso, '')::timestamptz,
-                      :forecaster, :label, :label2, :stroke, :fill,
-                      ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326)
-                    )
-                    """
-                )
-                for idx, feat in enumerate(features):
-                    geom = feat.get("geometry")
-                    props = feat.get("properties") or {}
-                    params = {
-                        "outlook_id": outlook_id,
-                        "feature_index": idx,
-                        "properties": json.dumps(props),
-                        "dn": props.get("DN"),
-                        "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
-                        "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
-                        "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or "",
-                        "forecaster": props.get("FORECASTER"),
-                        "label": props.get("LABEL"),
-                        "label2": props.get("LABEL2"),
-                        "stroke": props.get("stroke"),
-                        "fill": props.get("fill"),
-                        "geom_json": json.dumps(geom) if geom is not None else None,
-                    }
-                    try:
-                        conn.execute(insert_stmt, params)
-                    except exc.DatabaseError as e:
-                        # Skip malformed geometries or insert errors but continue
-                        print(f"Warning: failed to insert feature {idx} for {url}: {e}")
+        for idx, feat in enumerate(features):
+            geom = feat.get("geometry")
+            props = feat.get("properties") or {}
+            params = {
+                "product": product,
+                "url": url,
+                "payload": json.dumps(payload),
+                "feature_index": idx,
+                "properties": json.dumps(props),
+                "dn": props.get("DN"),
+                "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
+                "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
+                "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or issue_iso,
+                "forecaster": props.get("FORECASTER"),
+                "label": props.get("LABEL"),
+                "label2": props.get("LABEL2"),
+                "stroke": props.get("stroke"),
+                "fill": props.get("fill"),
+                "geom_json": json.dumps(geom) if geom is not None else None,
+            }
+            try:
+                conn.execute(insert_stmt, params)
+            except exc.DatabaseError as e:
+                print(f"Warning: failed to insert convective feature {idx} for {url}: {e}")
 
 
 def upsert_fire(product: str, url: str, payload: dict):
-    issue_iso = None
-    if isinstance(payload, dict):
-        issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE")
-    stmt = text(
+    if not isinstance(payload, dict):
+        return
+    features = payload.get("features") or []
+    issue_iso = payload.get("properties", {}).get("ISSUE_ISO") or payload.get("properties", {}).get("ISSUE") or ""
+    insert_stmt = text(
         """
-        INSERT INTO fire_outlooks (product, url, payload, fetched_hour, issue)
-        VALUES (:product, :url, :payload, date_trunc('hour', now()), NULLIF(:issue_iso, '')::timestamptz)
-        ON CONFLICT (product, issue) DO UPDATE
-          SET payload = EXCLUDED.payload
-        RETURNING id
+        INSERT INTO fire_outlooks (
+          product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+          forecaster, label, label2, stroke, fill, geom, created_at
+        ) VALUES (
+          :product, :url, :payload, date_trunc('hour', now()), :feature_index, :properties, :dn,
+          NULLIF(:valid_iso, '')::timestamptz, NULLIF(:expire_iso, '')::timestamptz, NULLIF(:issue_iso, '')::timestamptz,
+          :forecaster, :label, :label2, :stroke, :fill, ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326), now()
+        )
+        ON CONFLICT (product, issue, feature_index) DO UPDATE
+          SET payload = EXCLUDED.payload,
+              properties = EXCLUDED.properties,
+              dn = EXCLUDED.dn,
+              valid = EXCLUDED.valid,
+              expire = EXCLUDED.expire,
+              forecaster = EXCLUDED.forecaster,
+              label = EXCLUDED.label,
+              label2 = EXCLUDED.label2,
+              stroke = EXCLUDED.stroke,
+              fill = EXCLUDED.fill,
+              geom = EXCLUDED.geom,
+              created_at = EXCLUDED.created_at
         """
     )
     with engine.begin() as conn:
-        res = conn.execute(stmt, {"product": product, "url": url, "payload": json.dumps(payload), "issue_iso": issue_iso or ""})
-        row = res.fetchone()
-        outlook_id = row[0] if row is not None else None
-        features = payload.get("features") if isinstance(payload, dict) else None
-        if outlook_id and features:
-            tbl = conn.execute(text("SELECT to_regclass('public.fire_features')")).scalar()
-            if not tbl:
-                print("Notice: fire_features table not present; skipping feature inserts")
-            else:
-                conn.execute(text("DELETE FROM fire_features WHERE outlook_id = :oid"), {"oid": outlook_id})
-                insert_stmt = text(
-                    """
-                    INSERT INTO fire_features (
-                      outlook_id, feature_index, properties, dn, valid, expire, issue,
-                      forecaster, label, label2, stroke, fill, geom
-                    ) VALUES (
-                      :outlook_id, :feature_index, :properties, :dn,
-                      NULLIF(:valid_iso, '')::timestamptz,
-                      NULLIF(:expire_iso, '')::timestamptz,
-                      NULLIF(:issue_iso, '')::timestamptz,
-                      :forecaster, :label, :label2, :stroke, :fill,
-                      ST_SetSRID(ST_GeomFromGeoJSON(:geom_json), 4326)
-                    )
-                    """
-                )
-                for idx, feat in enumerate(features):
-                    geom = feat.get("geometry")
-                    props = feat.get("properties") or {}
-                    params = {
-                        "outlook_id": outlook_id,
-                        "feature_index": idx,
-                        "properties": json.dumps(props),
-                        "dn": props.get("DN"),
-                        "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
-                        "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
-                        "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or "",
-                        "forecaster": props.get("FORECASTER"),
-                        "label": props.get("LABEL"),
-                        "label2": props.get("LABEL2"),
-                        "stroke": props.get("stroke"),
-                        "fill": props.get("fill"),
-                        "geom_json": json.dumps(geom) if geom is not None else None,
-                    }
-                    try:
-                        conn.execute(insert_stmt, params)
-                    except exc.DatabaseError as e:
-                        print(f"Warning: failed to insert fire feature {idx} for {url}: {e}")
+        for idx, feat in enumerate(features):
+            geom = feat.get("geometry")
+            props = feat.get("properties") or {}
+            params = {
+                "product": product,
+                "url": url,
+                "payload": json.dumps(payload),
+                "feature_index": idx,
+                "properties": json.dumps(props),
+                "dn": props.get("DN"),
+                "valid_iso": props.get("VALID_ISO") or props.get("VALID") or "",
+                "expire_iso": props.get("EXPIRE_ISO") or props.get("EXPIRE") or "",
+                "issue_iso": props.get("ISSUE_ISO") or props.get("ISSUE") or issue_iso,
+                "forecaster": props.get("FORECASTER"),
+                "label": props.get("LABEL"),
+                "label2": props.get("LABEL2"),
+                "stroke": props.get("stroke"),
+                "fill": props.get("fill"),
+                "geom_json": json.dumps(geom) if geom is not None else None,
+            }
+            try:
+                conn.execute(insert_stmt, params)
+            except exc.DatabaseError as e:
+                print(f"Warning: failed to insert fire feature {idx} for {url}: {e}")
 
 
 def fetch_and_store(name: str, url: str, product: str):

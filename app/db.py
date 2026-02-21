@@ -122,8 +122,61 @@ def init_db():
             with engine.begin() as conn:
                 try:
                     sql_text = sql_file.read_text()
-                    # exec_driver_sql runs the raw SQL (supports multiple statements)
+                    # If running against an older DB with separate *_features tables,
+                    # perform a migration into the new single-table schema.
+                    # Detect old feature tables
+                    has_conv_features = conn.execute(text("SELECT to_regclass('public.convective_features')")).scalar()
+                    has_fire_features = conn.execute(text("SELECT to_regclass('public.fire_features')")).scalar()
+
+                    # First, create the new single-table schema in a safe way
                     conn.exec_driver_sql(sql_text)
+
+                    # If old feature tables exist, migrate their rows into the new single table
+                    if has_conv_features:
+                        # Create a temp new table (if not exists) and populate from old tables
+                        conn.exec_driver_sql(
+                            """
+                            CREATE TABLE IF NOT EXISTS convective_outlooks_new AS
+                              SELECT NULL::serial AS id LIMIT 0;
+                            """
+                        )
+                        # Create the proper schema for convective_outlooks_new
+                        conn.exec_driver_sql(sql_text.replace('CREATE TABLE IF NOT EXISTS convective_outlooks', 'CREATE TABLE IF NOT EXISTS convective_outlooks_new'))
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO convective_outlooks_new (
+                              product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+                              forecaster, label, label2, stroke, fill, geom, created_at
+                            )
+                            SELECT o.product, o.url, o.payload, o.fetched_hour, f.feature_index, f.properties, f.dn, f.valid, f.expire,
+                                   COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
+                            FROM convective_outlooks o JOIN convective_features f ON f.outlook_id = o.id
+                            ON CONFLICT DO NOTHING;
+                            """
+                        )
+                        # Preserve old tables by renaming and swap in new table
+                        conn.exec_driver_sql("ALTER TABLE convective_outlooks RENAME TO convective_outlooks_old;")
+                        conn.exec_driver_sql("ALTER TABLE convective_features RENAME TO convective_features_old;")
+                        conn.exec_driver_sql("ALTER TABLE convective_outlooks_new RENAME TO convective_outlooks;")
+
+                    if has_fire_features:
+                        conn.exec_driver_sql(sql_text.replace('convective_outlooks', 'fire_outlooks').replace('CREATE TABLE IF NOT EXISTS fire_outlooks', 'CREATE TABLE IF NOT EXISTS fire_outlooks_new'))
+                        conn.exec_driver_sql(
+                            """
+                            INSERT INTO fire_outlooks_new (
+                              product, url, payload, fetched_hour, feature_index, properties, dn, valid, expire, issue,
+                              forecaster, label, label2, stroke, fill, geom, created_at
+                            )
+                            SELECT o.product, o.url, o.payload, o.fetched_hour, f.feature_index, f.properties, f.dn, f.valid, f.expire,
+                                   COALESCE(f.issue, o.issue), f.forecaster, f.label, f.label2, f.stroke, f.fill, f.geom, f.created_at
+                            FROM fire_outlooks o JOIN fire_features f ON f.outlook_id = o.id
+                            ON CONFLICT DO NOTHING;
+                            """
+                        )
+                        conn.exec_driver_sql("ALTER TABLE fire_outlooks RENAME TO fire_outlooks_old;")
+                        conn.exec_driver_sql("ALTER TABLE fire_features RENAME TO fire_features_old;")
+                        conn.exec_driver_sql("ALTER TABLE fire_outlooks_new RENAME TO fire_outlooks;")
+                    
                 except Exception:
                     # If the DB user cannot create extensions or types, ignore and continue
                     pass
