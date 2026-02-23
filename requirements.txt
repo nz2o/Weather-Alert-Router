@@ -36,9 +36,9 @@ markupsafe==3.0.3
     # via jinja2
 packaging==26.0
     # via geoalchemy2
-psycopg[binary]==3.3.2
+psycopg[binary]==3.3.3
     # via -r requirements.in
-psycopg-binary==3.3.2
+psycopg-binary==3.3.3
     # via psycopg
 pydantic==2.12.5
     # via fastapi
